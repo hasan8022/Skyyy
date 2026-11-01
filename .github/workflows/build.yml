@@ -1,5 +1,4 @@
-
-name: Build Skywell ET5 Android 9-12 APK
+Name: Build Skywell ET5 Android 9-12 APK
 
 on:
   push:
@@ -80,7 +79,7 @@ jobs:
           cache: gradle
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK Platforms
         run: |
