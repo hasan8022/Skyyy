@@ -1,4 +1,4 @@
-Name: Build Skywell ET5 Android 9-12 APK
+name: Build Skywell ET5 Android 9-12 APK
 
 on:
   push:
