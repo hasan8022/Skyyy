@@ -1,0 +1,170 @@
+
+name: Build Skywell ET5 Android 9-12 APK
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build Skywell ET5 APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP and Find Android Project
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p extracted
+
+          echo "Searching ZIP files..."
+
+          while IFS= read -r -d '' ZIP_FILE; do
+            echo "Extracting: $ZIP_FILE"
+            DEST="extracted/$(basename "$ZIP_FILE" .zip)"
+            mkdir -p "$DEST"
+            unzip -oq "$ZIP_FILE" -d "$DEST"
+          done < <(find . -maxdepth 2 -type f -iname "*.zip" \
+            -not -path "./extracted/*" -print0)
+
+          echo "Searching for Gradle project..."
+
+          PROJECT_DIR=$(python3 - <<'PY'
+          import os
+
+          excluded = {".git", ".gradle", "build", "node_modules"}
+          candidates = []
+
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in excluded]
+
+              if "settings.gradle" in files or "settings.gradle.kts" in files:
+                  candidates.append(root)
+
+          if not candidates:
+              for root, dirs, files in os.walk("."):
+                  dirs[:] = [d for d in dirs if d not in excluded]
+                  if "build.gradle" in files or "build.gradle.kts" in files:
+                      candidates.append(root)
+
+          if not candidates:
+              raise SystemExit("ERROR: Android Gradle project not found!")
+
+          candidates.sort(key=lambda x: (x.count(os.sep), len(x)))
+          print(os.path.normpath(candidates[0]))
+          PY
+          )
+
+          echo "Found project: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          ls -la "$PROJECT_DIR"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Platforms
+        run: |
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-28" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build Debug APK
+        id: debug
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            GRADLE="./gradlew"
+          else
+            GRADLE="gradle"
+          fi
+
+          "$GRADLE" assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      - name: Build Release APK
+        id: release
+        continue-on-error: true
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            GRADLE="./gradlew"
+          else
+            GRADLE="gradle"
+          fi
+
+          "$GRADLE" assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: Prepare APK Files
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p dist-apk
+
+          find "$PROJECT_DIR" -type f -name "*.apk" \
+            -not -path "*/build/intermediates/*" \
+            -print0 | while IFS= read -r -d '' APK; do
+
+              case "$APK" in
+                *"/debug/"*)
+                  NAME="Skywell_ET5_Android_9_12_Debug.apk"
+                  ;;
+                *"/release/"*)
+                  NAME="Skywell_ET5_Android_9_12_Release.apk"
+                  ;;
+                *)
+                  NAME="$(basename "$APK")"
+                  ;;
+              esac
+
+              cp "$APK" "dist-apk/$NAME"
+              echo "APK: $NAME"
+          done
+
+          ls -lh dist-apk/ || true
+
+      - name: Upload APK Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Skywell-ET5-Android-9-12-APKs
+          path: dist-apk/*.apk
+          if-no-files-found: warn
+          retention-days: 14
